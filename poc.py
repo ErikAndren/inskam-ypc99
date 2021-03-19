@@ -93,39 +93,6 @@ def recv_thread(sock):
 
                 frame.write(data)
                 break
-# 05 33 8b 11 - Some kind of control header
-# 05 33 8b 11 06 00 27 00 00 00 00 22 00 00 00
-#  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15
-# 05 33 8b 11 03 00 05 00 00 00 00 ff ff 01 00
-#  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15
-# Byte 5 is command
-# 00 = Client Ping?
-# 01 = Server Pong?
-# 02 = Client Request for something
-# 03 = Server Reply
-# 05 = Client ?
-# 06 = Server Send firmware and voudp
-# 09 = Client update time and timezone clock= tz= save=[0, 1], update_tz
-# 0A = Server ?
-# 0B = Client sends ascii parameters
-# 0C = Server ?
-# 0D = Server send settings, power, motor, record, disk, zoom
-# 0E = Client Start stream
-# 0F = Server ?
-# 1C = Client ?
-# 25 = Server frame
-# 2F = Client
-
-
-# 05 33 8b 11 0f 00 01 00  00 00 00
-# Frame 1 - Sop at 0xFA
-# 05 33 8b 11 25 00 12 04 00 00 03 00 0f 00 00 01 95 8f 00 00 00 00 00 00 cc 1e 00 00 ff d8
-#  0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26
-# Frame 1 - middle of packet 0x4FA (0x400) = 1024
-# 05 33 8b 11 25 00 01 04 00 00 02 51 4d 34 51 4d a6 d1 45 34 d3 68 a2 92 9a 68 a2 99 45 14 53 29
-
-# Frame 2
-# 05 33 8b 11 25 00 12 04 00 00 03 00 0f 00 00 01 95 8f 00 00 00 00 00 00 18 1f 00 00 ff d8
 
 
 MSG_1 = b'\x05\x33\x8b\x11\x00\x00\x00\x00\x00\x00'
