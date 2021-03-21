@@ -17,16 +17,12 @@ FRAME_HEADER_BASE_LENGTH = 10
 
 FRAME_COMMAND_POS = 4
 FRAME_HEADER_LENGTH_POS = 6
-FRAME_IMAGE_LENGTH_MSB_POS = 7
-FRAME_IMAGE_LENGTH_LSB_POS = 8
+FRAME_IMAGE_LENGTH_MSB_POS = 6
+FRAME_IMAGE_LENGTH_LSB_POS = 7
+FRAME_IMAGE_SOI_OFFSET = 18
 
 FRAME_COMMAND_ENABLE_STREAM = 0x0e
 FRAME_COMMAND_IMAGE = 0x25
-
-SEARCH_FOR_HEADER = 1
-RECEIVING_IMAGE = 2
-FIND_SOI = 1
-FIND_EOI = 2
 
 def recv_thread(sock):
     print("Starting receive thread")
@@ -44,34 +40,33 @@ def recv_thread(sock):
                 if ctrl_header_pos == -1:
                     break;
 
-                ctrl_header_end = packet[ctrl_header_pos + FRAME_HEADER_LENGTH_POS] + 9
+                ctrl_header_end = ctrl_header_pos + 10
                 ctrl_header = packet[ctrl_header_pos:ctrl_header_end]
                 print("Ctrl header" , ctrl_header.hex(), " end: ", ctrl_header_end)
 
                 frame_command = ctrl_header[FRAME_COMMAND_POS]
                 if frame_command == FRAME_COMMAND_IMAGE:
                     # Relative packet
-                    image_start_pos = ctrl_header_pos + ctrl_header[FRAME_HEADER_LENGTH_POS] + 10
-                    #image_start_pos = ctrl_header_pos + 10
-                    print("Frame image length: ", ctrl_header[FRAME_IMAGE_LENGTH_MSB_POS:FRAME_IMAGE_LENGTH_LSB_POS + 1].hex())
-                    image_frame_len = int.from_bytes(ctrl_header[FRAME_IMAGE_LENGTH_MSB_POS:FRAME_IMAGE_LENGTH_LSB_POS + 1], "big")
+                    image_start_pos = ctrl_header_pos + 10
+
+                    image_frame_len = int.from_bytes(ctrl_header[FRAME_IMAGE_LENGTH_MSB_POS:FRAME_IMAGE_LENGTH_LSB_POS + 1], "little")
+                    print("Frame image length: ", ctrl_header[FRAME_IMAGE_LENGTH_MSB_POS:FRAME_IMAGE_LENGTH_LSB_POS + 1].hex(), " ", image_frame_len)
+
                     image_frame_end = image_start_pos + image_frame_len
 
-                    if image_frame_len == 0:
-                        print("End of image frame")
-                        frame.write(packet[10:])
-                        frame.close()
-                        frame = None
-                        packet = ""
-                        continue
-
                     print("image starts at:", image_start_pos, "image frame len", image_frame_len, "ends", image_frame_end, "first bytes", packet[image_start_pos:image_start_pos + 2].hex())
-                    if packet[image_start_pos:image_start_pos + 2] == JFIF_SOI:
+                    if packet[image_start_pos + FRAME_IMAGE_SOI_OFFSET : image_start_pos + FRAME_IMAGE_SOI_OFFSET + 2] == JFIF_SOI:
                         ts = time.time()
                         filename = "frame_" + str(ts) + ".jpg"
                         frame = open(filename, "wb")
+
+                        # Skip header before SOI marker
+                        image_frame_len = image_frame_len - FRAME_IMAGE_SOI_OFFSET
+                        image_start_pos = image_start_pos + FRAME_IMAGE_SOI_OFFSET
+                        print("Skipping header. Starting at: ", packet[image_start_pos : image_start_pos + 4].hex())
+
                     elif frame == None:
-                        print("Did not find JFIF SOF at start of new image")
+                        print("Did not find JFIF SOF")
                         sys.exit(-1)
 
                     # Sometimes image frame overlaps multiple network packets
@@ -87,7 +82,7 @@ def recv_thread(sock):
                         # Sometimes multiple image frames coincide in the same packet
                         frame.write(packet[image_start_pos:image_frame_end])
                         image_frame_len = 0
-                        print ("End of frame: ", packet[image_frame_end - 2 : image_frame_end + 4].hex(), "file size:", frame.tell()xo)
+                        print ("End of frame: ", packet[image_frame_end - 2 : image_frame_end + 4].hex(), "file size:", frame.tell())
                         if packet[image_frame_end - 2 : image_frame_end] == JFIF_EOI:
                             print("Found end of frame 1")
                             frame.close()
