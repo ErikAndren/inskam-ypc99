@@ -10,117 +10,124 @@ BUFFER_SIZE = 16384
 JFIF_SOI = b'\xff\xd8'
 JFIF_EOI = b'\xff\xd9'
 
+FRAME_CONTROL_HEADER = b'\x05\x33\x8b\x11'
+
+FRAME_HEADER_BASE_LENGTH = 10
+
+FRAME_COMMAND_POS = 4
+FRAME_HEADER_LENGTH_POS = 6
+FRAME_IMAGE_LENGTH_MSB_POS = 7
+FRAME_IMAGE_LENGTH_LSB_POS = 8
+
+FRAME_COMMAND_ENABLE_STREAM = 0x0e
+FRAME_COMMAND_IMAGE = 0x25
+
+SEARCH_FOR_HEADER = 1
+RECEIVING_IMAGE = 2
 FIND_SOI = 1
 FIND_EOI = 2
 
 def recv_thread(sock):
     print("Starting receive thread")
-    frame_state = FIND_SOI
+    frame_state = SEARCH_FOR_HEADER
     frame = None
+    image_frame_len = 0
 
     while True:
-        data = sock.recv(BUFFER_SIZE)
-        #print("Got ", data.hex(), " or ", data)
+        packet = sock.recv(BUFFER_SIZE)
+        print ("Received packet of length: ", len(packet))
 
-        while True:
-            soi_pos = -1
-            eoi_pos = -1
+        while len(packet) > 0:
+            if image_frame_len == 0:
+                ctrl_header_pos = packet.find(FRAME_CONTROL_HEADER)
 
-            if frame_state == FIND_SOI:
-                soi_pos = data.find(JFIF_SOI)
+                if ctrl_header_pos == -1:
+                    break;
 
-                if soi_pos != -1:
-                    frame_state = FIND_EOI
+                ctrl_header_end = packet[ctrl_header_pos + FRAME_HEADER_LENGTH_POS] + 9
+                ctrl_header = packet[ctrl_header_pos:ctrl_header_end]
+                print("Ctrl header" , ctrl_header.hex(), " end: ", ctrl_header_end)
 
+                frame_command = ctrl_header[FRAME_COMMAND_POS]
+                if frame_command == FRAME_COMMAND_IMAGE:
+                    print("Frame image command")
+                    frame_state = RECEIVING_IMAGE
+
+                    # Relative packet
+                    image_start_pos = ctrl_header_pos + ctrl_header[FRAME_HEADER_LENGTH_POS] + 10
+                    print("Frame image length: ", ctrl_header[FRAME_IMAGE_LENGTH_MSB_POS:FRAME_IMAGE_LENGTH_LSB_POS + 1])
+                    image_frame_len = int.from_bytes(ctrl_header[FRAME_IMAGE_LENGTH_MSB_POS:FRAME_IMAGE_LENGTH_LSB_POS + 1], "big")
+                    image_frame_end = image_start_pos + image_frame_len
+
+                    if image_frame_len == 0:
+                        print("End of image frame")
+                        frame.write(packet[10:])
+                        frame.close()
+                        frame.close()
+                        packet = ""
+                        continue
+
+                    print("image starts at: ", image_start_pos, " image frame len ", image_frame_len, " ends ", image_frame_end, " first bytes ", packet[image_start_pos:image_start_pos + 2])
+                    if packet[image_start_pos:image_start_pos + 2] == JFIF_SOI:
+                        ts = time.time()
+                        filename = "frame_" + str(ts) + ".jpg"
+                        frame = open(filename, "wb")
+                    elif frame == None:
+                        print("Did not find JFIF SOF at start of new image")
+                        quit(-1)
+
+                    # Sometimes image frame overlaps multiple network packets
+                    print ("image frame length: " , image_frame_len, " rest of packet: ", len(packet[image_start_pos:]))
+                    if image_frame_len > len(packet[image_start_pos:]):
+                        print("Image frame overlaps packet")
+                        frame.write(packet[image_start_pos:])
+                        image_frame_len = image_frame_len - len(packet[image_start_pos:])
+                        packet = ""
+                        print(image_frame_len, " image bytes in next packet")
+
+                    else:
+                        # Sometimes multiple image frames coincide in the same packet
+                        frame.write(packet[image_start_pos:image_frame_end])
+                        image_frame_len = 0
+                        print ("End of frame: ", packet[image_frame_end - 2 : image_frame_end + 4].hex())
+                        if packet[image_frame_end - 2 : image_frame_end] == JFIF_EOI:
+                            print("Found end of frame")
+                            frame.close()
+                            frame = None
+
+                        # Skip all packet consumed in this packet
+                        packet = packet[image_frame_end:]
+                        print("Start of next packet: ", packet[:2].hex())
                 else:
-                    # Could not find any more SOI in this packet, discard rest of packet
-                    break
+                    # Skip non image ctrl frame for now
+                    packet = packet[ctrl_header_end + 1:]
 
-            if frame_state == FIND_EOI:
-                eoi_pos = data.find(JFIF_EOI)
-                if eoi_pos != -1:
-#                    print("Found end of frame")
-#                    print(data[eoi_pos:eoi_pos + 2])
-#                    quit()
+            elif frame != None:
+                # Continuation of a previous image
+                # Sometimes an image frame overlaps multiple packets
+                if image_frame_len > len(packet):
+                    frame.write(packet)
+                    image_frame_len = image_frame_len - len(packet)
+                    packet = ""
+                else:
+                    frame.write(packet[:image_frame_len])
+                    if packet[image_frame_len - 2:image_frame_len] == JFIF_EOI:
+                        print("Found end of frame")
+                        frame.close()
+                        frame = None
 
-                    # Found end of frame
-                    frame_state = FIND_SOI
-
-            # Found a complete frame (soi + eoi)
-            if soi_pos != -1 and eoi_pos != -1:
-                ts = time.time()
-                filename = "frame_" + str(ts) + ".jpg"
-                frame = open(filename, "wb")
-                frame.write(data[soi_pos:eoi_pos + 2])
-                frame.close()
-
-#                print("Found soi and eoi")
-#                print(data[soi_pos:eoi_pos + 3])
-
-                # Discard frame from packet
-                data = data[eoi_pos + 3:]
-
-            # Found start but not end of frame, treat rest of packet as start of a frame
-            elif soi_pos != -1 and eoi_pos == -1:
-                ts = time.time()
-                filename = "frame_" + str(ts) + ".jpg"
-                frame = open(filename, "wb")
-                frame.write(data[soi_pos:])
-
-#                print("Found soi")
-#                print(data[soi_pos:])
-
-                # Packet handled, wait for next packet
-                break
-
-            # Found end of frame, write packet until end of frame
-            elif soi_pos == -1 and eoi_pos != -1:
-                frame.write(data[:eoi_pos + 2])
-                frame.close()
-
-                #print("Found eoi")
-                #print(data[:eoi_pos + 2].hex())
-                #print(data[eoi_pos:eoi_pos + 2])
-                #quit()
-
-                # Discard frame from packet
-                data = data[eoi_pos + 3:]
-
-            # Found continuation of frame, write to image and then wait for next packet
-            elif frame_state == FIND_EOI and eoi_pos == -1:
-#                print("Found middle of frame")
-#                print(data)
-
-                frame.write(data)
-                break
+                    packet = packet[image_frame_len:]
+                    image_frame_len = 0
+                    print("Start of next packet: ", packet[:2].hex())
 
 
-MSG_1 = b'\x05\x33\x8b\x11\x00\x00\x00\x00\x00\x00'
-MSG_2 = b'\x05\x33\x8b\x11\x02\x00\x12\x00\x00\x00\x06\x41\x44\x10\x18\x01\xf3\xf2\xd8\x01\x43\x74\x4e\x18\x1f\x3b\x03\x5a'
-MSG_3 = b'\x05\x33\x8b\x11\x2f\x00\x01\x00\x00\x00\x00\x05\x33\x8b\x11\x05\x00\x00\x00\x00\x00'
-MSG_4 = b'\x05\x33\x8b\x11\x0b\x00\xed\x00\x00\x00\x61\x6c\x61\x72\x6d\x00\x64\x69\x73\x6b\x00\x72\x65\x63\x6f\x72\x64\x00\x77\x69\x66\x69\x5f\x73\x69\x67\x6e\x61\x6c\x5f\x6c\x65\x76\x65\x6c\x00\x74\x65\x6d\x70\x65\x72\x61\x74\x75\x72\x65\x00\x6d\x65\x69\x6a\x69\x6e\x67\x5f\x70\x6c\x61\x79\x00\x6d\x65\x69\x6a\x69\x6e\x67\x5f\x6c\x65\x64\x00\x70\x6f\x77\x65\x72\x64\x6f\x77\x6e\x00\x62\x65\x6c\x6c\x00\x61\x72\x6d\x00\x64\x69\x6a\x69\x61\x5f\x73\x74\x61\x74\x75\x73\x00\x64\x69\x6a\x69\x61\x5f\x6d\x75\x74\x65\x00\x64\x69\x6a\x69\x61\x5f\x73\x70\x65\x65\x64\x00\x70\x6f\x77\x65\x72\x00\x65\x77\x69\x67\x5f\x6d\x65\x6c\x6f\x64\x79\x5f\x73\x69\x7a\x65\x00\x65\x77\x69\x67\x5f\x66\x6f\x6f\x64\x00\x65\x77\x69\x67\x5f\x6d\x6f\x74\x6f\x72\x00\x73\x65\x73\x73\x69\x6f\x6e\x73\x00\x64\x69\x73\x6b\x5f\x73\x69\x7a\x65\x00\x6a\x75\x79\x61\x6e\x67\x5f\x73\x74\x61\x74\x75\x73\x00\x77\x6f\x72\x6b\x69\x6e\x67\x5f\x73\x63\x65\x6e\x65\x73\x00\x72\x66\x5f\x63\x68\x61\x6e\x67\x65\x64\x00\x6d\x6f\x74\x6f\x72\x00'
-MSG_5 = b'\x05\x33\x8b\x11\x09\x00\x2d\x00\x00\x00\x63\x6c\x6f\x63\x6b\x3d\x31\x36\x31\x35\x38\x32\x30\x35\x38\x39\x00\x74\x7a\x3d\x2d\x33\x36\x30\x30\x00\x73\x61\x76\x65\x3d\x31\x00\x75\x70\x64\x61\x74\x65\x5f\x74\x7a\x3d\x31\x00'
-# Likely the only needed message
-#0x0e and 0x04 must be set to get data
-#MSG_6 = b'\x05\x33\x8b\x11\x0e\x00\x04\x00\x00\x00\x00\x00\x00\x00\x05\x33\x8b\x11\x1c\x00\x02\x00\x00\x00\x03\x01'
-# This is the smallest message we can send to get data
+# This is the smallest message we can send to get images flowing
 MSG_6 = b'\x05\x33\x8b\x11\x0e\x00\x04\x00\x00\x00\x00\x00\x00\x00'
 
-#print(MSG_1)
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 sock.connect((TCP_IP, TCP_PORT))
 
 recv_thread = threading.Thread(target=recv_thread, args=(sock,))
 recv_thread.start()
 
-#sock.send(MSG_1)
-#time.sleep(1)
-#sock.send(MSG_2)
-#time.sleep(1)
-#sock.send(MSG_3)
-#time.sleep(1)
-#sock.send(MSG_4)
-#time.sleep(1)
-#sock.send(MSG_5)
-#time.sleep(1)
 sock.send(MSG_6)
