@@ -1,6 +1,7 @@
 import socket
 import threading
 import time
+import sys
 
 TCP_IP = '192.168.1.1'
 #TCP_IP = 'Barnard.familjen.com'
@@ -29,7 +30,6 @@ FIND_EOI = 2
 
 def recv_thread(sock):
     print("Starting receive thread")
-    frame_state = SEARCH_FOR_HEADER
     frame = None
     image_frame_len = 0
 
@@ -50,12 +50,10 @@ def recv_thread(sock):
 
                 frame_command = ctrl_header[FRAME_COMMAND_POS]
                 if frame_command == FRAME_COMMAND_IMAGE:
-                    print("Frame image command")
-                    frame_state = RECEIVING_IMAGE
-
                     # Relative packet
                     image_start_pos = ctrl_header_pos + ctrl_header[FRAME_HEADER_LENGTH_POS] + 10
-                    print("Frame image length: ", ctrl_header[FRAME_IMAGE_LENGTH_MSB_POS:FRAME_IMAGE_LENGTH_LSB_POS + 1])
+                    #image_start_pos = ctrl_header_pos + 10
+                    print("Frame image length: ", ctrl_header[FRAME_IMAGE_LENGTH_MSB_POS:FRAME_IMAGE_LENGTH_LSB_POS + 1].hex())
                     image_frame_len = int.from_bytes(ctrl_header[FRAME_IMAGE_LENGTH_MSB_POS:FRAME_IMAGE_LENGTH_LSB_POS + 1], "big")
                     image_frame_end = image_start_pos + image_frame_len
 
@@ -63,18 +61,18 @@ def recv_thread(sock):
                         print("End of image frame")
                         frame.write(packet[10:])
                         frame.close()
-                        frame.close()
+                        frame = None
                         packet = ""
                         continue
 
-                    print("image starts at: ", image_start_pos, " image frame len ", image_frame_len, " ends ", image_frame_end, " first bytes ", packet[image_start_pos:image_start_pos + 2])
+                    print("image starts at:", image_start_pos, "image frame len", image_frame_len, "ends", image_frame_end, "first bytes", packet[image_start_pos:image_start_pos + 2].hex())
                     if packet[image_start_pos:image_start_pos + 2] == JFIF_SOI:
                         ts = time.time()
                         filename = "frame_" + str(ts) + ".jpg"
                         frame = open(filename, "wb")
                     elif frame == None:
                         print("Did not find JFIF SOF at start of new image")
-                        quit(-1)
+                        sys.exit(-1)
 
                     # Sometimes image frame overlaps multiple network packets
                     print ("image frame length: " , image_frame_len, " rest of packet: ", len(packet[image_start_pos:]))
@@ -89,15 +87,17 @@ def recv_thread(sock):
                         # Sometimes multiple image frames coincide in the same packet
                         frame.write(packet[image_start_pos:image_frame_end])
                         image_frame_len = 0
-                        print ("End of frame: ", packet[image_frame_end - 2 : image_frame_end + 4].hex())
+                        print ("End of frame: ", packet[image_frame_end - 2 : image_frame_end + 4].hex(), "file size:", frame.tell()xo)
                         if packet[image_frame_end - 2 : image_frame_end] == JFIF_EOI:
-                            print("Found end of frame")
+                            print("Found end of frame 1")
                             frame.close()
                             frame = None
+                            sys.exit(1)
 
                         # Skip all packet consumed in this packet
                         packet = packet[image_frame_end:]
-                        print("Start of next packet: ", packet[:2].hex())
+                        if len(packet) > 0:
+                            print("Start of next packet: ", packet[:2].hex())
                 else:
                     # Skip non image ctrl frame for now
                     packet = packet[ctrl_header_end + 1:]
@@ -112,13 +112,15 @@ def recv_thread(sock):
                 else:
                     frame.write(packet[:image_frame_len])
                     if packet[image_frame_len - 2:image_frame_len] == JFIF_EOI:
-                        print("Found end of frame")
+                        print("Found end of frame 2")
                         frame.close()
                         frame = None
+                        sys.exit(2)
 
                     packet = packet[image_frame_len:]
                     image_frame_len = 0
-                    print("Start of next packet: ", packet[:2].hex())
+                    if len(packet) > 0:
+                        print("Start of next packet: ", packet[:2].hex())
 
 
 # This is the smallest message we can send to get images flowing
