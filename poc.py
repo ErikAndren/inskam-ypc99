@@ -2,9 +2,10 @@ import socket
 import threading
 import time
 import sys
+import cv2
+import queue
 
 TCP_IP = '192.168.1.1'
-#TCP_IP = 'Barnard.familjen.com'
 TCP_PORT = 80
 BUFFER_SIZE = 16384
 
@@ -24,14 +25,17 @@ FRAME_IMAGE_SOI_OFFSET = 17
 FRAME_COMMAND_ENABLE_STREAM = 0x0e
 FRAME_COMMAND_IMAGE = 0x25
 
-def recv_thread(sock):
+def recv_thread(sock, frame_queue):
     print("Starting receive thread")
     frame = None
     image_frame_len = 0
+    window_name = 'image'
 
     while True:
         packet = sock.recv(BUFFER_SIZE)
         print ("Received packet of length: ", len(packet))
+        if len(packet) == 0:
+            sys.exit(-1)
 
         while len(packet) > 0:
             if image_frame_len == 0:
@@ -87,6 +91,7 @@ def recv_thread(sock):
                         if packet[image_frame_end - 2 : image_frame_end] == JFIF_EOI:
                             print("Found end of frame 1")
                             frame.close()
+                            frame_queue.put(frame.name)
                             frame = None
 
                         # Skip all packet consumed in this packet
@@ -109,6 +114,7 @@ def recv_thread(sock):
                     if packet[image_frame_len - 2:image_frame_len] == JFIF_EOI:
                         print("Found end of frame 2")
                         frame.close()
+                        frame_queue.put(frame.name)
                         frame = None
 
                     packet = packet[image_frame_len:]
@@ -116,6 +122,7 @@ def recv_thread(sock):
                     if len(packet) > 0:
                         print("Start of next packet: ", packet[:2].hex())
 
+frame_queue = queue.Queue()
 
 # This is the smallest message we can send to get images flowing
 MSG_6 = b'\x05\x33\x8b\x11\x0e\x00\x04\x00\x00\x00\x00\x00\x00\x00'
@@ -123,7 +130,13 @@ MSG_6 = b'\x05\x33\x8b\x11\x0e\x00\x04\x00\x00\x00\x00\x00\x00\x00'
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 sock.connect((TCP_IP, TCP_PORT))
 
-recv_thread = threading.Thread(target=recv_thread, args=(sock,))
+recv_thread = threading.Thread(target=recv_thread, args=(sock, frame_queue))
 recv_thread.start()
 
 sock.send(MSG_6)
+
+while True:
+    frame = frame_queue.get()
+    image = cv2.imread(frame)
+    cv2.imshow('window', image)
+    cv2.waitKey(1)
