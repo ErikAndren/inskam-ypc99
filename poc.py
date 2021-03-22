@@ -2,6 +2,7 @@ import socket
 import threading
 import time
 import sys
+import numpy
 import cv2
 import queue
 
@@ -62,8 +63,8 @@ def recv_thread(sock, frame_queue):
 
                     if packet[image_start_pos + FRAME_IMAGE_SOI_OFFSET : image_start_pos + FRAME_IMAGE_SOI_OFFSET + 2] == JFIF_SOI:
                         ts = time.time()
-                        filename = "frame_" + str(ts) + ".jpg"
-                        frame = open(filename, "wb")
+#                        filename = "frame_" + str(ts) + ".jpg"
+#                        frame = open(filename, "wb")
                         framebuffer = bytearray()
 
                         # Skip header before SOI marker
@@ -71,9 +72,10 @@ def recv_thread(sock, frame_queue):
                         image_start_pos = image_start_pos + FRAME_IMAGE_SOI_OFFSET
                         print("Skipping header. Starting at: ", packet[image_start_pos : image_start_pos + 2].hex(), "image frame len:", image_frame_len)
 
-                    elif frame == None:
-                        print("Did not find JFIF SOF")
+                    elif framebuffer == None:
+                        print("Did not find JFIF SOF, dumping packet:", packet.hex())
                         sys.exit(-1)
+
 
                     # Sometimes image frame overlaps multiple network packets
                     print ("image frame length: " , image_frame_len, " rest of packet: ", len(packet[image_start_pos:]))
@@ -91,13 +93,14 @@ def recv_thread(sock, frame_queue):
                         framebuffer.extend(bytearray(packet[image_start_pos:image_frame_end]))
 
                         image_frame_len = 0
-                        print ("End of frame:", packet[image_frame_end - 2 : image_frame_end + 4].hex(), "file size:", frame.tell())
+                        print ("End of frame:", packet[image_frame_end - 2 : image_frame_end + 4].hex())
                         if packet[image_frame_end - 2 : image_frame_end] == JFIF_EOI:
                             print("Found end of frame 1")
-                            frame.write(framebuffer)
-                            frame.close()
-                            frame_queue.put(frame.name)
-                            frame = None
+#                            frame.write(framebuffer)
+#                            frame.close()
+                            frame_queue.put(framebuffer)
+                            framebuffer = None
+#                            frame = None
 
                         # Skip all packet consumed in this packet
                         packet = packet[image_frame_end:]
@@ -107,7 +110,7 @@ def recv_thread(sock, frame_queue):
                     # Skip non image ctrl frame for now
                     packet = packet[ctrl_header_end + 1:]
 
-            elif frame != None:
+            else:
                 # Continuation of a previous image
                 # Sometimes an image frame overlaps multiple packets
                 if image_frame_len > len(packet):
@@ -121,10 +124,11 @@ def recv_thread(sock, frame_queue):
 
                     if packet[image_frame_len - 2:image_frame_len] == JFIF_EOI:
                         print("Found end of frame 2")
-                        frame.write(framebuffer)
-                        frame.close()
-                        frame_queue.put(frame.name)
-                        frame = None
+#                        frame.write(framebuffer)
+#                        frame.close()
+                        frame_queue.put(framebuffer)
+                        framebuffer = None
+#                        frame = None
 
                     packet = packet[image_frame_len:]
                     image_frame_len = 0
@@ -146,6 +150,8 @@ sock.send(MSG_6)
 
 while True:
     frame = frame_queue.get()
-    image = cv2.imread(frame)
+#    print("Got frame ", frame)
+    nparr = numpy.frombuffer(frame, numpy.uint8)
+    image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     cv2.imshow('window', image)
     cv2.waitKey(1)
