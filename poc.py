@@ -19,7 +19,7 @@ FRAME_COMMAND_POS = 4
 FRAME_HEADER_LENGTH_POS = 6
 FRAME_IMAGE_LENGTH_MSB_POS = 6
 FRAME_IMAGE_LENGTH_LSB_POS = 7
-FRAME_IMAGE_SOI_OFFSET = 18
+FRAME_IMAGE_SOI_OFFSET = 17
 
 FRAME_COMMAND_ENABLE_STREAM = 0x0e
 FRAME_COMMAND_IMAGE = 0x25
@@ -40,21 +40,24 @@ def recv_thread(sock):
                 if ctrl_header_pos == -1:
                     break;
 
-                ctrl_header_end = ctrl_header_pos + 10
+                ctrl_header_end = ctrl_header_pos + 11
                 ctrl_header = packet[ctrl_header_pos:ctrl_header_end]
                 print("Ctrl header" , ctrl_header.hex(), " end: ", ctrl_header_end)
 
                 frame_command = ctrl_header[FRAME_COMMAND_POS]
                 if frame_command == FRAME_COMMAND_IMAGE:
                     # Relative packet
-                    image_start_pos = ctrl_header_pos + 10
+                    image_start_pos = ctrl_header_pos + 11
 
-                    image_frame_len = int.from_bytes(ctrl_header[FRAME_IMAGE_LENGTH_MSB_POS:FRAME_IMAGE_LENGTH_LSB_POS + 1], "little")
+                    image_frame_len = int.from_bytes(ctrl_header[FRAME_IMAGE_LENGTH_MSB_POS:FRAME_IMAGE_LENGTH_LSB_POS + 1], "little") - 1
                     print("Frame image length: ", ctrl_header[FRAME_IMAGE_LENGTH_MSB_POS:FRAME_IMAGE_LENGTH_LSB_POS + 1].hex(), " ", image_frame_len)
 
                     image_frame_end = image_start_pos + image_frame_len
 
-                    print("image starts at:", image_start_pos, "image frame len", image_frame_len, "ends", image_frame_end, "first bytes", packet[image_start_pos:image_start_pos + 2].hex())
+                    print("image frame start:", image_start_pos, "image frame len", image_frame_len, "ends", image_frame_end, "first bytes:", packet[image_start_pos:image_start_pos + 2].hex(), "last bytes:", packet[image_frame_end - 2: image_frame_end].hex())
+
+                    print (packet[image_start_pos : image_start_pos + FRAME_IMAGE_SOI_OFFSET + 2].hex())
+                    print (packet[image_start_pos + FRAME_IMAGE_SOI_OFFSET : image_start_pos + FRAME_IMAGE_SOI_OFFSET + 2].hex())
                     if packet[image_start_pos + FRAME_IMAGE_SOI_OFFSET : image_start_pos + FRAME_IMAGE_SOI_OFFSET + 2] == JFIF_SOI:
                         ts = time.time()
                         filename = "frame_" + str(ts) + ".jpg"
@@ -63,7 +66,7 @@ def recv_thread(sock):
                         # Skip header before SOI marker
                         image_frame_len = image_frame_len - FRAME_IMAGE_SOI_OFFSET
                         image_start_pos = image_start_pos + FRAME_IMAGE_SOI_OFFSET
-                        print("Skipping header. Starting at: ", packet[image_start_pos : image_start_pos + 4].hex())
+                        print("Skipping header. Starting at: ", packet[image_start_pos : image_start_pos + 2].hex(), "image frame len:", image_frame_len)
 
                     elif frame == None:
                         print("Did not find JFIF SOF")
@@ -82,7 +85,7 @@ def recv_thread(sock):
                         # Sometimes multiple image frames coincide in the same packet
                         frame.write(packet[image_start_pos:image_frame_end])
                         image_frame_len = 0
-                        print ("End of frame: ", packet[image_frame_end - 2 : image_frame_end + 4].hex(), "file size:", frame.tell())
+                        print ("End of frame:", packet[image_frame_end - 2 : image_frame_end + 4].hex(), "file size:", frame.tell())
                         if packet[image_frame_end - 2 : image_frame_end] == JFIF_EOI:
                             print("Found end of frame 1")
                             frame.close()
