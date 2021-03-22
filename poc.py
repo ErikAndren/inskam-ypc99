@@ -13,7 +13,7 @@ JFIF_EOI = b'\xff\xd9'
 
 FRAME_CONTROL_HEADER = b'\x05\x33\x8b\x11'
 
-FRAME_HEADER_BASE_LENGTH = 10
+FRAME_HEADER_LEN = 11
 
 FRAME_COMMAND_POS = 4
 FRAME_HEADER_LENGTH_POS = 6
@@ -40,14 +40,14 @@ def recv_thread(sock):
                 if ctrl_header_pos == -1:
                     break;
 
-                ctrl_header_end = ctrl_header_pos + 11
+                ctrl_header_end = ctrl_header_pos + FRAME_HEADER_LEN
                 ctrl_header = packet[ctrl_header_pos:ctrl_header_end]
                 print("Ctrl header" , ctrl_header.hex(), " end: ", ctrl_header_end)
 
                 frame_command = ctrl_header[FRAME_COMMAND_POS]
                 if frame_command == FRAME_COMMAND_IMAGE:
                     # Relative packet
-                    image_start_pos = ctrl_header_pos + 11
+                    image_start_pos = ctrl_header_pos + FRAME_HEADER_LEN
 
                     image_frame_len = int.from_bytes(ctrl_header[FRAME_IMAGE_LENGTH_MSB_POS:FRAME_IMAGE_LENGTH_LSB_POS + 1], "little") - 1
                     print("Frame image length: ", ctrl_header[FRAME_IMAGE_LENGTH_MSB_POS:FRAME_IMAGE_LENGTH_LSB_POS + 1].hex(), " ", image_frame_len)
@@ -56,8 +56,6 @@ def recv_thread(sock):
 
                     print("image frame start:", image_start_pos, "image frame len", image_frame_len, "ends", image_frame_end, "first bytes:", packet[image_start_pos:image_start_pos + 2].hex(), "last bytes:", packet[image_frame_end - 2: image_frame_end].hex())
 
-                    print (packet[image_start_pos : image_start_pos + FRAME_IMAGE_SOI_OFFSET + 2].hex())
-                    print (packet[image_start_pos + FRAME_IMAGE_SOI_OFFSET : image_start_pos + FRAME_IMAGE_SOI_OFFSET + 2].hex())
                     if packet[image_start_pos + FRAME_IMAGE_SOI_OFFSET : image_start_pos + FRAME_IMAGE_SOI_OFFSET + 2] == JFIF_SOI:
                         ts = time.time()
                         filename = "frame_" + str(ts) + ".jpg"
@@ -90,7 +88,6 @@ def recv_thread(sock):
                             print("Found end of frame 1")
                             frame.close()
                             frame = None
-                            sys.exit(1)
 
                         # Skip all packet consumed in this packet
                         packet = packet[image_frame_end:]
@@ -113,7 +110,6 @@ def recv_thread(sock):
                         print("Found end of frame 2")
                         frame.close()
                         frame = None
-                        sys.exit(2)
 
                     packet = packet[image_frame_len:]
                     image_frame_len = 0
