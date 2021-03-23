@@ -8,6 +8,7 @@ import queue
 
 TCP_IP = '192.168.1.1'
 TCP_PORT = 80
+RTSP_PORT = 7070
 BUFFER_SIZE = 16384
 
 JFIF_SOI = b'\xff\xd8'
@@ -26,17 +27,47 @@ FRAME_IMAGE_SOI_OFFSET = 17
 FRAME_COMMAND_ENABLE_STREAM = 0x0e
 FRAME_COMMAND_IMAGE = 0x25
 
-def recv_thread(sock, frame_queue):
+# This is the smallest message we can send to get images flowing
+MSG_1 = b'\x05\x33\x8b\x11\x00\x00\x00\x00\x00\x00'
+MSG_2 = b'\x05\x33\x8b\x11\x02\x00\x12\x00\x00\x00\x06\xba\x49\x88\xd5\x21\xea\x12\x64\x01\xdc\xf4\xbb\x5d\x48\x6d\x93\xbc'
+MSG_3 = b'\x05\x33\x8b\x11\x2f\x00\x01\x00\x00\x00\x00\x05\x33\x8b\x11\x05\x00\x00\x00\x00\x00'
+
+START_STREAM_MSG = b'\x05\x33\x8b\x11\x0e\x00\x04\x00\x00\x00\x00\x00\x00\x00'
+
+def send_thread():
+    rtsp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    rtsp_sock.connect((TCP_IP, RTSP_PORT))
+
+
+def recv_thread(frame_queue):
     print("Starting receive thread")
-    frame = None
     image_frame_len = 0
-    window_name = 'image'
+    framebuffer = None
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((TCP_IP, TCP_PORT))
+        sock.send(MSG_1)
+        sock.send(MSG_2)
+        sock.send(MSG_3)
+
+        sock.send(START_STREAM_MSG)
+    except:
+        e = sys.exc_info()[0]
+        print("Failed to setup socket", e)
+        return
 
     while True:
-        packet = sock.recv(BUFFER_SIZE)
-        print ("Received packet of length: ", len(packet), "packet type is ", type(packet))
-        if len(packet) == 0:
-            sys.exit(-1)
+        try:
+            packet = sock.recv(BUFFER_SIZE)
+        except:
+            e = sys.exc_info()[0]
+            print("socket failed, retrying", e)
+
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((TCP_IP, TCP_PORT))
+            sock.send(START_STREAM_MSG)
+            continue
 
         while len(packet) > 0:
             if image_frame_len == 0:
@@ -74,8 +105,7 @@ def recv_thread(sock, frame_queue):
 
                     elif framebuffer == None:
                         print("Did not find JFIF SOF, dumping packet:", packet.hex())
-                        sys.exit(-1)
-
+                        return
 
                     # Sometimes image frame overlaps multiple network packets
                     print ("image frame length: " , image_frame_len, " rest of packet: ", len(packet[image_start_pos:]))
@@ -104,8 +134,6 @@ def recv_thread(sock, frame_queue):
 
                         # Skip all packet consumed in this packet
                         packet = packet[image_frame_end:]
-                        if len(packet) > 0:
-                            print("Start of next packet: ", packet[:2].hex())
                 else:
                     # Skip non image ctrl frame for now
                     packet = packet[ctrl_header_end + 1:]
@@ -132,21 +160,11 @@ def recv_thread(sock, frame_queue):
 
                     packet = packet[image_frame_len:]
                     image_frame_len = 0
-                    if len(packet) > 0:
-                        print("Start of next packet: ", packet[:2].hex())
 
 frame_queue = queue.Queue()
 
-# This is the smallest message we can send to get images flowing
-MSG_6 = b'\x05\x33\x8b\x11\x0e\x00\x04\x00\x00\x00\x00\x00\x00\x00'
-
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-sock.connect((TCP_IP, TCP_PORT))
-
-recv_thread = threading.Thread(target=recv_thread, args=(sock, frame_queue))
+recv_thread = threading.Thread(target=recv_thread, args=(frame_queue, ))
 recv_thread.start()
-
-sock.send(MSG_6)
 
 while True:
     frame = frame_queue.get()
